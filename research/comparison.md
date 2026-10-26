@@ -1,6 +1,6 @@
 # 開源 Harness 跨工具比較
 
-查證日期：2026-10-25。資料全部來自 `research/` 下 7 份個別報告（opencode、cline、kilo-code、aider、codex-cli、goose、openhands）。
+查證日期：2026-10-25。資料全部來自 `research/` 下 8 份個別報告（opencode、cline、kilo-code、aider、codex-cli、goose、openhands、hermes-agent）。§1–§6 的表格只涵蓋前 7 家，**Hermes Agent 的對照放在 §10**（定位不同，單獨比較較清楚）；§3 的觀察已把它納入。
 **可信度說明：** 各家官方文件站在查證環境都連不上（DNS／proxy），報告改讀 repo 內的 markdown 與原始碼；issue 多數只讀到標題或搜尋摘要。star 數與版本號變動快，僅供參考。「未驗證」表示該報告沒能從一手來源確認，不代表不存在。
 
 ## 0. 對先前口頭說法的更正
@@ -55,7 +55,7 @@
 | OpenHands | CLI 逐項確認；有 ConfirmRisky＋多種 analyzer | Docker／apptainer／cloud 可選，但**預設 npm 路徑無 sandbox** | **未驗證存在** | — |
 
 **觀察：**
-1. 七家裡只有 Cline 與 Kilo 做了「不依賴使用者 git、不污染使用者 git」的 checkpoint；其中 Cline 較完整，Kilo 有 7 天 gc 的限制。
+1. 八家裡只有 Cline、Kilo、Hermes 做了「不依賴使用者 git、不污染使用者 git」的 checkpoint；其中 Cline 較完整，Kilo 有 7 天 gc 的限制，**Hermes 的 checkpoint 預設關閉**且容器 backend 不支援（見 §10）。
 2. 只有 Codex 做了真正的 OS 級 sandbox，但它沒有檔案復原，Windows 還常失敗。**沒有任何一家同時做到「強隔離＋可靠復原」。**
 3. 預設值偏寬鬆是常態（OpenCode、Goose、Cline CLI）。新手拿到的是最危險的預設。
 4. 兩種權限實作的弱點都有實例：OpenCode 的 symlink 繞過（#58638）、Plan mode 經 MCP 可寫檔（#58537）；Cline 把判斷交給模型。
@@ -140,7 +140,65 @@
 9. 設定面膨脹，且 UI 顯示與實際行為不一致（Codex granular approval 選了詢問卻直接拒絕）。
 10. 單一維護者（Aider）。
 
-## 10. 本研究的限制（決策前需補查）
+## 10. Hermes Agent 補充
+
+查證日期 2026-10-26。Hermes 是前面七家以外的另一種東西：**長駐的通用個人 agent**，coding 只是其中一個 toolset。它跟我們的目標使用者（想升級的 vibe coder）不是正面競爭，但它的「學習迴圈」是其他七家都沒有的，值得單獨拆解。
+
+### 10.1 基本資料
+
+| | Hermes Agent |
+|---|---|
+| Repo／授權 | NousResearch/hermes-agent，MIT |
+| 技術棧 | Python 核心；Ink TUI；Electron 桌面 app |
+| 規模 | repo 頁面顯示約 257k stars、59k commits、open issues／PR 各「5k+」（第二手來源的 star 數彼此矛盾，這裡只採 repo 頁面） |
+| 版本 | v0.22.5（2026-10-22），每週多版，**仍是 0.x**；v0.22.1 曾因 build 錯 commit 被取代 |
+| 營利 | Nous Portal 訂閱（300+ 模型＋ Tool Gateway）。融資與價格未驗證 |
+| 入口 | CLI、TUI、桌面 app、ACP（VS Code／Zed／JetBrains）、約 20 個訊息平台 gateway（Telegram、Discord、Slack 等） |
+| 工具 | README 寫「40+」，文件實列 71 個，但含大量平台專屬工具（kanban、feishu、desktop_ui）；一般 coding 用到的遠少於 71 |
+
+### 10.2 學習迴圈（核心差異）
+
+| 機制 | 做法 | 護欄 |
+|---|---|---|
+| 記憶 | `MEMORY.md`（約 2.2k 字元）＋ `USER.md`（約 1.4k 字元），超額必須自行整併 | session 開始時凍結進 prompt（保 prompt cache），**學到的東西下個 session 才生效**；寫入有注入／憑證外洩掃描 |
+| 過往對話 | SQLite FTS5 全文檢索全部 session | 文件稱不呼叫 LLM；README 與 sessions.md 對此說法矛盾 |
+| Skill | agent 用 `skill_manage` 把摸索出的流程存成 `SKILL.md`，背景 review 會建議或更新 | `write_approval: true` 時先進暫存區，用 `/skills approve` 審核；**預設是否開啟未驗證，推論為關閉** |
+| Curator | 閒置時整理：14 天未用標 stale，30 天未用移入 archive | **只 archive 不刪除**；整併前有全樹 snapshot、逐筆 ledger、`curator rollback` |
+| 使用者控制 | 直接編輯檔案、`/memory pending`、`hermes journey list／delete／edit` | memory 刪除沒有還原 |
+
+**可借鏡：** 記憶分兩層（小而有上限的常駐記憶＋無上限但按需檢索的全文搜尋）；強制容量上限逼 agent 整併；暫存審核佇列；只 archive 不刪除；每筆變更有 ledger 可回滾。
+**風險（報告推論，非實測）：** 自動建立的 skill 之後每次對話都可能被載入；掃描只涵蓋已知樣式；「錯但常用」的 skill 因為使用頻率高反而不會被淘汰；沒有看到對 skill 品質的自動驗證。官方「唯一內建學習迴圈」是行銷語，**沒有效果評測**。
+**對新手產品的含義：** 暫存審核應預設開，並以白話介面呈現（「我學到了這個，要保留嗎？」）；新學到的東西要標示來源對話，並有一鍵停用與回滾。
+
+### 10.3 安全與復原（Hermes 在 §3 表格中的位置）
+
+| 項目 | 現況 |
+|---|---|
+| 預設核准 | **smart**：輔助 LLM 判斷風險，低風險自動核准、危險自動拒絕、不確定才問 |
+| 已知事故 | open issue #141346：smart approval 自動核准了 `osascript` 指令，關掉使用者未存檔的 PowerPoint 並刪除唯一的 PDF，**資料無法復原**。社群修補 PR 被 reviewer 指出可用 base64／awk 繞過，尚未合併 |
+| 硬性防線 | hardline blocklist（`rm -rf /`、fork bomb、raw disk write）即使 `--yolo` 也不繞過；`write_file`／`patch` 不能碰 `~/.ssh/`、`.env` |
+| 隔離 | terminal backend 可選 local、Docker、SSH、Modal、Daytona 等。**容器 backend 視容器為邊界，略過危險命令檢查**。預設是否為 local 為推論 |
+| 檔案復原 | shadow git checkpoint＋`/rollback`（可單檔、還原前自動備份、辨識使用者手改）。**但 v2 起預設關閉**（opt-in），容器 backend 不支援，預設每專案 20 份／500MB／7 天 prune，無 git 則停用 |
+| 訊息 gateway | 未設 allowlist 時預設**拒絕所有人**；DM pairing 碼 1 小時過期有速率限制 |
+
+**結論：** Hermes 把「LLM 當風險判官」做成預設，並已經造成一起無法復原的事故；checkpoint 設計得不錯但預設不開。這再次印證 §7 的缺口：**預設安全＋可靠復原**仍然沒有人做到。對我們的啟示是用確定性規則加上「GUI app 狀態、未存檔工作、刪除非自建檔案」升級人工確認，並 fail closed。
+
+### 10.4 其他
+
+- **規則檔：** 第一個命中即用，順序為 `.hermes.md` > `AGENTS.override.md` > `AGENTS.md` > `CLAUDE.md` > `.cursorrules`；`hermes import-agent` 可匯入 OpenClaw、Claude Code、Codex CLI、Cursor 的設定／記憶／skills。
+- **壓縮：** 預設在 context 的 50% 觸發，舊 tool 結果先換佔位符，中段用結構化模板摘要。**摘要模型的 context 必須不小於主模型，否則中段被直接丟棄**（靜默失敗）。
+- **Subagent：** `delegate_task` 預設最多 10 個並行，可選 git worktree 隔離，可指定較便宜的模型。
+- **成本：** 沒有找到全域花費上限；有 goal 迴圈 turn budget（預設 20）、委派深度與並行上限、MCP spend limits。桌面版切到昂貴模型前會警告。
+- **新手友善度：** 一行安裝＋桌面 app＋ Portal OAuth 門檻低，桌面有 Basic／Elite 版面。但表面積極大（71 工具、數十個設定頁、plugins、profiles、kanban），簡化模式是否有效收斂**未驗證**；coding 專屬品質（編輯成功率、diff review）**沒有數據**。
+- **其他痛點（issue 標題層級）：** 桌面同一回覆渲染兩次（#127665）、`hermes update` 後 gateway 警告持續（#107402）、godfile 重構中（#78647，82 則留言）。
+
+### 10.5 Hermes 對整體結論的影響
+
+1. 「八家裡沒有任何一家同時做到強隔離、可靠復原、成本可控、預設安全」仍然成立。
+2. **新增一個缺口：自動學習的狀態沒有人做好治理。** Hermes 有治理工具（暫存審核、curator、ledger），但預設寬鬆。對 vibe coder 來說，「越用越懂我的專案」很有吸引力，同時是新的風險面。這是潛在的差異化點，也可以是明確要避開的範圍，取決於你的 MVP 取捨。
+3. 它不是新手 coding 產品。通用助理的表面積和 0.x 的高頻重構，跟我們想做的「新手一鍵開始、專業可深入」正好相反。
+
+## 11. 本研究的限制（決策前需補查）
 
 - 全部官方網站都沒讀到，只讀 repo 內文件；實際使用體驗**沒有人實測**（首跑畫面、錯誤訊息、速度、模型表現都只是文件推論）。
 - 各家 benchmark 分數沒有可比較的數據，本文不評論「誰寫程式比較強」。
